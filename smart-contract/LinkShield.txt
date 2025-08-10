@@ -1,0 +1,179 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+contract LinkShield {
+    struct Link {
+        string url;
+        address owner;
+        uint256 fee;
+        uint256 createdAt;        // Timestamp de quando o link foi criado
+        uint256 purchaseCount;    // Quantidade de vezes que foi comprado
+        uint256 totalEarned;      // Valor total arrecadado com o link
+    }
+    
+    address public platformOwner;    // Dono da plataforma
+    uint256 public commission = 1;
+    mapping(string => Link) private links; 
+    mapping(string => mapping(address => bool)) public hasAccess;
+    
+    // Modifier para restringir acesso apenas ao dono da plataforma
+    modifier onlyPlatformOwner() {
+        require(msg.sender == platformOwner, "Only platform owner can call this function");
+        _;
+    }
+    
+    // Constructor - executa apenas uma vez no deploy
+    constructor() {
+        platformOwner = msg.sender; // Quem fez deploy vira o dono
+    }
+
+// Evento disparado quando um usuário cria um novo link na plataforma
+event LinkAdded(string indexed linkId, address indexed owner, uint256 fee, uint256 timestamp);
+
+// Evento disparado quando alguém compra/paga para acessar um link
+event LinkPurchased(string indexed linkId, address indexed buyer, uint256 amount, uint256 timestamp);
+
+// Evento disparado quando o admin da plataforma altera o valor da comissão
+event CommissionUpdated(uint256 oldCommission, uint256 newCommission, uint256 timestamp);
+
+// Evento disparado quando o admin da plataforma remove/deleta um link
+event LinkDeleted(string indexed linkId, address indexed deletedBy, uint256 timestamp);
+
+// Evento disparado quando o dono da plataforma transfere a propriedade para outro endereço
+event PlatformOwnerTransferred(address indexed oldOwner, address indexed newOwner, uint256 timestamp);
+
+    function addLink(string calldata url, string calldata linkId, uint256 fee) public {
+        Link storage link = links[linkId];
+        require(link.owner == address(0) || link.owner == msg.sender, "This linkId already has an owner");
+        require(fee == 0 || fee > commission, "Fee too low");
+        
+        // Se é um link novo (não tem owner), inicializa os novos campos
+        if (link.owner == address(0)) {
+            link.createdAt = block.timestamp;
+            link.purchaseCount = 0;
+            link.totalEarned = 0;
+        }
+        
+        link.url = url;
+        link.fee = fee;
+        link.owner = msg.sender;
+        
+        hasAccess[linkId][msg.sender] = true;
+        
+        emit LinkAdded(linkId, msg.sender, fee, block.timestamp);
+    }
+
+    function payLink(string calldata linkId) public payable {
+        Link storage link = links[linkId];
+        require(link.owner != address(0), "Link not found");
+        require(hasAccess[linkId][msg.sender] == false, "You already have access"); 
+        require(msg.value >= link.fee, "Insufficient payment");
+        
+        hasAccess[linkId][msg.sender] = true;
+        
+        // Atualiza as estatísticas do link
+        link.purchaseCount += 1;
+        link.totalEarned += (msg.value - commission);
+        
+        payable(link.owner).transfer(msg.value - commission);
+        
+        emit LinkPurchased(linkId, msg.sender, msg.value, block.timestamp);
+    }
+
+    function getLink(string calldata linkId) public view returns (Link memory) {
+        Link memory link = links[linkId];
+        if(link.fee == 0) return link;
+        if(hasAccess[linkId][msg.sender] == false)
+            link.url = "";
+        return link;
+    }
+    
+    // === FUNÇÕES ADMINISTRATIVAS (só o dono da plataforma) ===
+    
+    function updateCommission(uint256 newCommission) public onlyPlatformOwner {
+        require(newCommission >= 0, "Commission must be non-negative");
+        
+        uint256 oldCommission = commission;
+        commission = newCommission;
+        
+        emit CommissionUpdated(oldCommission, newCommission, block.timestamp);
+    }
+    
+    function deleteLink(string calldata linkId) public onlyPlatformOwner {
+        Link storage link = links[linkId];
+        require(link.owner != address(0), "Link not found");
+        
+        // Remove o link completamente
+        delete links[linkId];
+        
+        emit LinkDeleted(linkId, msg.sender, block.timestamp);
+    }
+    
+    // Função que permite ao dono atual transferir a propriedade da plataforma para outro endereço
+    function transferPlatformOwnership(address newOwner) public onlyPlatformOwner {
+    // Verifica se o novo dono não é um endereço vazio/inválido (0x000...)
+    require(newOwner != address(0), "New owner cannot be zero address");
+    
+    // Verifica se o novo dono é diferente do atual (não faz sentido transferir pra si mesmo)
+    require(newOwner != platformOwner, "New owner must be different");
+    
+    // Salva o endereço do dono atual antes de mudar (para o evento)
+    address oldOwner = platformOwner;
+    
+    // Transfere oficialmente a propriedade para o novo endereço
+    platformOwner = newOwner;
+    
+    // Emite evento notificando a transferência de propriedade
+    emit PlatformOwnerTransferred(oldOwner, newOwner, block.timestamp);
+    }
+    
+    // Função que permite ao dono da plataforma sacar todas as comissões acumuladas
+    function withdrawCommissions() public onlyPlatformOwner {
+        // Pega o saldo total de ETH acumulado no contrato (todas as comissões)
+        uint256 balance = address(this).balance;
+   
+        // Verifica se existe algum valor para sacar, senão cancela a transação
+        require(balance > 0, "No commissions to withdraw");
+   
+        // Transfere todo o saldo do contrato para a carteira do dono da plataforma
+        payable(platformOwner).transfer(balance);
+    }
+    
+    // === FUNÇÕES DE CONSULTA ===
+    
+    function getLinkStats(string calldata linkId) public view returns (
+        uint256 createdAt,
+        uint256 purchaseCount,
+        uint256 totalEarned,
+        address owner
+    ) {
+        Link memory link = links[linkId];
+        require(link.owner != address(0), "Link not found");
+        
+        return (
+            link.createdAt,
+            link.purchaseCount,
+            link.totalEarned,
+            link.owner
+        );
+    }
+    
+    // Função que retorna informações gerais da plataforma (dados públicos para consulta)
+    function getPlatformInfo() public view returns (
+        address owner,           // Endereço do dono da plataforma
+        uint256 currentCommission, // Valor atual da comissão cobrada
+        uint256 contractBalance    // Quanto ETH o contrato tem acumulado
+    ) {
+    return (
+        platformOwner,           // Retorna quem é o dono da plataforma
+        commission,              // Retorna o valor atual da comissão em wei
+        address(this).balance    // Retorna quanto ETH está guardado no contrato
+    );
+    }
+    
+    // Função que verifica se um endereço específico é o dono da plataforma
+    function isPlatformOwner(address account) public view returns (bool) {
+    // Compara o endereço fornecido com o endereço do dono da plataforma
+        return account == platformOwner; // Retorna true se for o dono, false se não for
+    }
+}
