@@ -1,0 +1,30 @@
+# Marcar linguagens principais
+*.sol linguist-language=Solidity
+*.js linguist-language=JavaScript
+*.jsx linguist-language=JavaScript
+*.ts linguist-language=TypeScript
+*.tsx linguist-language=TypeScript
+
+# Ignorar arquivos de build/dependências na detecção
+dapp-linkshield/node_modules/* linguist-vendored
+dapp-linkshield/.next/* linguist-generated
+dapp-linkshield/out/* linguist-generated
+dapp-linkshield/build/* linguist-generated
+
+# Reduzir peso de linguagens secundárias
+*.css linguist-detectable=false
+*.scss linguist-detectable=false
+*.html linguist-detectable=false
+*.json linguist-documentation
+
+# Marcar arquivos importantes como detectáveis
+*.sol linguist-detectable=true
+*.js linguist-detectable=true
+*.jsx linguist-detectable=true
+*.ts linguist-detectable=true
+*.tsx linguist-detectable=true
+
+# Ignorar arquivos de configuração
+package-lock.json linguist-generated
+yarn.lock linguist-generated
+*.config.js linguist-documentation
